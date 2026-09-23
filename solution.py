@@ -19,9 +19,9 @@ Last updated by vp 09/09/2026
 
 class Solver:
 
-    STUDENT_NAME = "Crystal Rover" # replace with your name
-    STUDENT_ID = "12345678"  # replace with your student ID
-    GITHUB_USERNAME = "cool-comp3702-student" # replace with your GitHub username
+    STUDENT_NAME = "Zixiang Ji" # replace with your name
+    STUDENT_ID = "49832853"  # replace with your student ID
+    GITHUB_USERNAME = "F1edFullMo0N" # replace with your GitHub username
 
     def __init__(self, game_env: GameEnv):
         self.game_env = game_env
@@ -51,8 +51,9 @@ class Solver:
         #
         # In order to ensure compatibility with tester, you should avoid adding additional arguments to this function.
         #
-        pass
-
+        self.vi_states = self.build_vi_states()
+        self.vi_values = {state: 0.0 for state in self.vi_states}
+        self.vi_previous_values = self.vi_values.copy()
     def vi_is_converged(self):
         """
         Check if Value Iteration has reached convergence.
@@ -63,7 +64,14 @@ class Solver:
         #
         # In order to ensure compatibility with tester, you should avoid adding additional arguments to this function.
         #
-        pass
+        if not self.vi_values or not self.vi_previous_values:
+            return False
+        max_delta = 0.0
+        for state in self.vi_values:
+            max_delta = max(max_delta, abs(self.vi_values[state] 
+                                            - self.vi_previous_values.get(state, 0.0)))
+        return max_delta <= self.game_env.epsilon
+
 
     def vi_iteration(self):
         """
@@ -74,7 +82,8 @@ class Solver:
         #
         # In order to ensure compatibility with tester, you should avoid adding additional arguments to this function.
         #
-        pass
+
+
 
     def vi_plan_offline(self):
         """
@@ -101,7 +110,7 @@ class Solver:
         #
         # In order to ensure compatibility with tester, you should avoid adding additional arguments to this function.
         #
-        pass
+        return self.vi_values.get(state, 0.0)
 
     def vi_select_action(self, state: GameState):
         """
@@ -186,4 +195,67 @@ class Solver:
     # TODO: Add any additional methods here
     #
     #
+    def get_valid_actions(self, state):
+        tile = self.game_env.grid_data[state.row][state.col]
 
+        if tile == self.game_env.CRATER_TILE:
+            return [
+                action for action in self.game_env.ACTIONS
+                if action in self.game_env.JUMP_ACTIONS
+            ]
+        else:
+            return [
+                action for action in self.game_env.ACTIONS
+                if action in self.game_env.WALK_ACTIONS
+                or action in self.game_env.BOOST_ACTIONS
+            ]
+        
+    def transition_outcomes(self, state, action):
+        if action not in self.game_env.ACTIONS:
+            return []
+
+        outcomes = {}
+        drift_actions = self.game_env.PERPENDICULAR_ACTIONS.get(action, [])
+        drift_probability = self.game_env.random_drift_prob
+        double_probability = self.game_env.random_double_prob
+        no_drift_probability = 1.0 - drift_probability
+        no_double_probability = 1.0 - double_probability
+
+        transition_sequences = [
+            ([action], no_drift_probability * no_double_probability),
+            ([action, action], no_drift_probability * double_probability),
+        ]
+
+        drift_step_probability = drift_probability / max(len(drift_actions), 1)
+        for drift_action in drift_actions:
+            transition_sequences.append(([drift_action], drift_step_probability 
+                                            * no_double_probability))
+            transition_sequences.append(([drift_action, drift_action],
+                                            drift_step_probability * double_probability))
+
+        for sequence, sequence_probability in transition_sequences:
+            if sequence_probability <= 0.0:
+                continue
+            self._expand_transition_sequence(state, sequence, sequence_probability, 0.0, outcomes)
+
+        return [
+            (next_state, probability_sum, reward_sum)
+            for next_state, (probability_sum, reward_sum) in outcomes.items()
+        ]
+    
+    def build_vi_states(self):
+        initial_state = self.game_env.get_init_state()
+        visited = {initial_state}
+        queue = [initial_state]
+
+        while queue:
+            state = queue.pop(0)
+            for action in self.get_valid_actions(state):
+                for next_state, _, _ in self.transition_outcomes(state, action):
+                    if next_state not in visited:
+                        visited.add(next_state)
+                        queue.append(next_state)
+
+        return list(visited)
+    
+ 
