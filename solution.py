@@ -33,6 +33,7 @@ class Solver:
         self.vi_values = {}
         self.vi_previous_values = {}
         self.vi_states = []
+        self.transition_cache = {}
 
     # TODO: next time, make this method external to the solver class
     @staticmethod
@@ -90,28 +91,29 @@ class Solver:
         #
 
         self.vi_previous_values = self.vi_values.copy()
-        new_values = {}
 
         for state in self.vi_states:
             if self.game_env.is_game_over(state) or self.game_env.is_solved(state):
-                new_values[state] = 0.0
+                self.vi_values[state] = 0.0
                 continue
 
             best_value = float('-inf')
+
             for action in self.get_valid_actions(state):
                 action_value = 0.0
-                for next_state, transition_prob, reward in self.transition_outcomes(state, action):
+
+                for next_state, transition_prob, reward in \
+                        self.transition_outcomes(state, action):
+
                     action_value += transition_prob * (
-                    reward
-                    + self.game_env.gamma
-                    * self.vi_previous_values.get(next_state, 0.0)
-                )
-                if action_value > best_value:
-                    best_value = action_value
+                        reward
+                        + self.game_env.gamma
+                        * self.vi_values.get(next_state, 0.0)
+                    )
 
-            new_values[state] = best_value
+                best_value = max(best_value, action_value)
 
-        self.vi_values = new_values
+            self.vi_values[state] = best_value
 
 
     def vi_plan_offline(self):
@@ -340,7 +342,11 @@ class Solver:
     def transition_outcomes(self, state, action):
         if action not in self.game_env.ACTIONS:
             return []
-
+        
+        key = (state, action)
+        if key in self.transition_cache:
+            return self.transition_cache[key]
+        
         outcomes = {}
         drift_actions = self.game_env.PERPENDICULAR_ACTIONS.get(action, [])
         drift_probability = self.game_env.random_drift_prob
@@ -368,22 +374,31 @@ class Solver:
             if probability_sum <= 0.0:
                 continue
             result.append((next_state, probability_sum, weighted_reward_sum / probability_sum))
+
+        self.transition_cache[key] = result
         return result
 
     def build_vi_states(self):
         initial_state = self.game_env.get_init_state()
+
         visited = {initial_state}
         queue = deque([initial_state])
+        states = []
 
         while queue:
             state = queue.popleft()
+            states.append(state)
+
+            if self.game_env.is_game_over(state) or self.game_env.is_solved(state):
+                continue
+
             for action in self.get_valid_actions(state):
                 for next_state, _, _ in self.transition_outcomes(state, action):
                     if next_state not in visited:
                         visited.add(next_state)
                         queue.append(next_state)
 
-        return list(visited)
+        return list(reversed(states))
 
     def expand_transition_sequence(self, state, sequence, probability, reward_so_far, outcomes):
         if not sequence:
