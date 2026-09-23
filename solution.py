@@ -83,7 +83,25 @@ class Solver:
         # In order to ensure compatibility with tester, you should avoid adding additional arguments to this function.
         #
 
-        
+        self.vi_previous_values = self.vi_values.copy()
+        new_values = {}
+
+        for state in self.vi_states:
+            if self.game_env.is_game_over(state) or self.game_env.is_solved(state):
+                new_values[state] = 0.0
+                continue
+
+            best_value = float('-inf')
+            for action in self.get_valid_actions(state):
+                action_value = 0.0
+                for next_state, transition_prob, reward in self.transition_outcomes(state, action):
+                    action_value += reward + self.game_env.gamma * transition_prob * self.vi_previous_values.get(next_state, 0.0)
+                if action_value > best_value:
+                    best_value = action_value
+
+            new_values[state] = best_value
+
+        self.vi_values = new_values
 
 
     def vi_plan_offline(self):
