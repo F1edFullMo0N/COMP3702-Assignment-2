@@ -197,12 +197,69 @@ class Solver:
             valid_actions = self.get_valid_actions(state)
             self.pi_policy[state] = valid_actions[0] if valid_actions else self.game_env.ACTIONS[0]
 
-        self.pi_states = self.build_vi_states()
-
         self.pi_state_index = {
             state: i
             for i, state in enumerate(self.pi_states)
         }
+
+        self.pi_action_index = {
+            action: i
+            for i, action in enumerate(self.game_env.ACTIONS)
+        }
+
+        # Keep this list for policy improvement, but policy evaluation below
+        # uses the full state matrix (i.e. no matrix downscaling).
+        self.pi_nonterminal_states = [
+            state for state in self.pi_states
+            if not self.game_env.is_game_over(state)
+            and not self.game_env.is_solved(state)
+        ]
+
+        self.pi_valid_actions = {
+            state: self.get_valid_actions(state)
+            for state in self.pi_states
+        }
+
+        sa_states = []
+        sa_actions = []
+        sa_rewards = []
+        tr_pair = []
+        tr_next = []
+        tr_prob = []
+
+        pair_id = 0
+
+        for state in self.pi_nonterminal_states:
+            s = self.pi_state_index[state]
+            for action in self.pi_valid_actions[state]:
+                a = self.pi_action_index[action]
+
+                sa_states.append(s)
+                sa_actions.append(a)
+
+                expected_reward = 0.0
+                for next_state, prob, reward in self.transition_outcomes(state, action):
+                    expected_reward += prob * reward
+
+                    tr_pair.append(pair_id)
+                    tr_next.append(self.pi_state_index[next_state])
+                    tr_prob.append(prob)
+
+                sa_rewards.append(expected_reward)
+                pair_id += 1
+
+        self.pi_sa_states = np.asarray(sa_states, dtype=np.int32)
+        self.pi_sa_actions = np.asarray(sa_actions, dtype=np.int32)
+        self.pi_sa_rewards = np.asarray(sa_rewards, dtype=np.float64)
+
+        self.pi_tr_pair = np.asarray(tr_pair, dtype=np.int32)
+        self.pi_tr_next = np.asarray(tr_next, dtype=np.int32)
+        self.pi_tr_prob = np.asarray(tr_prob, dtype=np.float64)
+
+        self.pi_value_array = np.zeros(
+            len(self.pi_states),
+            dtype=np.float64,
+        )
 
         self.pi_values = {
             state: 0.0
@@ -242,74 +299,61 @@ class Solver:
         if not self.pi_states:
             return
 
-        t0 = time.perf_counter()
         self.pi_previous_policy = self.pi_policy.copy()
-        t1 = time.perf_counter()
 
+        # Policy evaluation using the full |S| x |S| system.
+        # Terminal-state rows remain as identity rows with b=0, so their value is 0.
         n = len(self.pi_states)
 
         A = np.eye(n)
         b = np.zeros(n)
 
-        for state in self.pi_states:
+        for state in self.pi_nonterminal_states:
             i = self.pi_state_index[state]
-
-            if self.game_env.is_game_over(state) \
-                    or self.game_env.is_solved(state):
-                continue
-
             action = self.pi_policy[state]
 
-            for next_state, probability, reward in \
-                    self.transition_outcomes(state, action):
-
-                j = self.pi_state_index[next_state]
-
-                # expected immediate reward
+            for next_state, probability, reward in self.transition_outcomes(state, action):
                 b[i] += probability * reward
-
-                # I - gamma P_pi
+                j = self.pi_state_index[next_state]
                 A[i, j] -= self.game_env.gamma * probability
 
-        t2 = time.perf_counter()
-
         values = np.linalg.solve(A, b)
-        t3 = time.perf_counter()
 
-        self.pi_values = {
-            state: values[i]
-            for state, i in self.pi_state_index.items()
-        }
+        self.pi_value_array[:] = values
+
+        for state, i in self.pi_state_index.items():
+            self.pi_values[state] = self.pi_value_array[i]
+
+        weighted_future = (
+            self.pi_tr_prob
+            * self.pi_value_array[self.pi_tr_next]
+        )
+        future_by_pair = np.bincount(
+            self.pi_tr_pair,
+            weights=weighted_future,
+            minlength=len(self.pi_sa_rewards),
+        )
+
+        q_pairs = (
+            self.pi_sa_rewards
+            + self.game_env.gamma * future_by_pair
+        )
+
+        n_states = len(self.pi_states)
+        n_actions = len(self.game_env.ACTIONS)
+        q_matrix = np.full((n_states, n_actions), -np.inf)
+        q_matrix[self.pi_sa_states, self.pi_sa_actions] = q_pairs
+
+        best_actions = np.argmax(q_matrix, axis=1)
 
         improved_policy = {}
+        for state in self.pi_nonterminal_states:
+            i = self.pi_state_index[state]
+            improved_policy[state] = self.game_env.ACTIONS[int(best_actions[i])]
 
         for state in self.pi_states:
             if self.game_env.is_game_over(state) or self.game_env.is_solved(state):
                 improved_policy[state] = self.game_env.ACTIONS[0]
-                continue
-            best_action = None
-            best_value = float('-inf')
-            for action in self.get_valid_actions(state):
-                action_value = 0.0
-                for next_state, transition_prob, reward in \
-                        self.transition_outcomes(state, action):
-                    action_value += transition_prob * (
-                        reward
-                        + self.game_env.gamma
-                        * self.pi_values.get(next_state, 0.0)
-                    )
-                if action_value > best_value:
-                    best_value = action_value
-                    best_action = action
-            improved_policy[state] = best_action
-
-        t4 = time.perf_counter()
-        print(
-            f"matrix={t2-t1:.6f}, "
-            f"solve={t3-t2:.6f}, "
-            f"improve={t4-t3:.6f}, "
-            f"total={t4-t0:.6f}"
-        )
 
         self.pi_policy = improved_policy
 
