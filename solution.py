@@ -83,6 +83,7 @@ class Solver:
         # In order to ensure compatibility with tester, you should avoid adding additional arguments to this function.
         #
 
+        
 
 
     def vi_plan_offline(self):
@@ -236,7 +237,7 @@ class Solver:
         for sequence, sequence_probability in transition_sequences:
             if sequence_probability <= 0.0:
                 continue
-            self._expand_transition_sequence(state, sequence, sequence_probability, 0.0, outcomes)
+            self.expand_transition_sequence(state, sequence, sequence_probability, 0.0, outcomes)
 
         return [
             (next_state, probability_sum, reward_sum)
@@ -258,4 +259,72 @@ class Solver:
 
         return list(visited)
     
- 
+    def expand_transition_sequence(self, state, sequence, probability, reward_so_far, outcomes):
+            if not sequence:
+                if state not in outcomes:
+                    outcomes[state] = [0.0, 0.0]
+                outcomes[state][0] += probability
+                outcomes[state][1] += probability * reward_so_far
+                return
+    
+            movement = sequence[0]
+            remaining = sequence[1:]
+    
+            if movement in self.game_env.BOOST_ACTIONS:
+                for move_distance, move_probability in enumerate(self.game_env.boost_probabilities):
+                    if move_probability <= 0.0:
+                        continue
+                    next_state, movement_reward = self.deterministic_move(state, movement, move_distance)
+                    self._expand_transition_sequence(next_state, remaining, probability * move_probability,
+                                                    reward_so_far + movement_reward, outcomes)
+            else:
+                next_state, movement_reward = self.deterministic_move(state, movement, 1)
+                self._expand_transition_sequence(next_state, remaining, probability, reward_so_far + movement_reward, outcomes)
+    
+    def deterministic_move(self, state, action, move_distance):
+        reward = -1.0 * self.game_env.ACTION_COST[action]
+        next_row, next_col = state.row, state.col
+        direction = self.game_env._action_direction(action)
+
+        deltas = {
+            'LEFT': (0, -1),
+            'RIGHT': (0, 1),
+            'UP': (-1, 0),
+            'DOWN': (1, 0),
+        }
+        delta_row, delta_col = deltas[direction]
+
+        collision = False
+        for _ in range(move_distance):
+            candidate_row = next_row + delta_row
+            candidate_col = next_col + delta_col
+            if not (0 <= candidate_row < self.game_env.n_rows and 0 <= candidate_col < self.game_env.n_cols) or \
+                    self.game_env.grid_data[candidate_row][candidate_col] == self.game_env.ROCK_TILE:
+                reward -= self.game_env.collision_penalty
+                collision = True
+                break
+
+            next_row, next_col = candidate_row, candidate_col
+
+            if self.game_env.grid_data[next_row][next_col] == self.game_env.CRATER_TILE:
+                break
+
+            if self.game_env.grid_data[next_row][next_col] == self.game_env.LAVA_TILE:
+                reward -= self.game_env.game_over_penalty
+                break
+
+        crystal_status = state.crystal_status
+        if (next_row, next_col) in self.game_env.crystal_positions:
+            crystal_index = self.game_env.crystal_positions.index((next_row, next_col))
+            if crystal_status[crystal_index] == 0:
+                crystal_status = list(crystal_status)
+                crystal_status[crystal_index] = 1
+                crystal_status = tuple(crystal_status)
+
+        next_state = GameState(next_row, next_col, crystal_status)
+        if not collision and self.game_env.is_game_over(next_state) and \
+                self.game_env.grid_data[next_row][next_col] != self.game_env.LAVA_TILE:
+            reward -= self.game_env.game_over_penalty
+
+        return next_state, reward
+
