@@ -1,5 +1,6 @@
 import sys
 import time
+import numpy as np
 from collections import deque
 
 from game_env import GameEnv
@@ -196,6 +197,17 @@ class Solver:
             valid_actions = self.get_valid_actions(state)
             self.pi_policy[state] = valid_actions[0] if valid_actions else self.game_env.ACTIONS[0]
 
+        self.pi_states = self.build_vi_states()
+
+        self.pi_state_index = {
+            state: i
+            for i, state in enumerate(self.pi_states)
+        }
+
+        self.pi_values = {
+            state: 0.0
+            for state in self.pi_states
+        }
 
     def pi_is_converged(self):
         """
@@ -229,36 +241,45 @@ class Solver:
         #
         if not self.pi_states:
             return
-        
+
+        t0 = time.perf_counter()
         self.pi_previous_policy = self.pi_policy.copy()
+        t1 = time.perf_counter()
 
-        while True:
-            old_values = self.pi_values.copy()
-            new_values = {}
-            max_delta = 0.0
+        n = len(self.pi_states)
 
-            for state in self.pi_states:
-                if self.game_env.is_game_over(state) or self.game_env.is_solved(state):
-                    new_values[state] = 0.0
-                    continue
-                action = self.pi_policy[state]
-                action_value = 0.0
-                for next_state, transition_prob, reward in \
-                        self.transition_outcomes(state, action):
+        A = np.eye(n)
+        b = np.zeros(n)
 
-                    action_value += transition_prob * (
-                        reward
-                        + self.game_env.gamma
-                        * old_values.get(next_state, 0.0)
-                    )
-                new_values[state] = action_value
-                max_delta = max(
-                    max_delta,
-                    abs(action_value - old_values.get(state, 0.0))
-                )
-            self.pi_values = new_values
-            if max_delta <= self.game_env.epsilon:
-                break
+        for state in self.pi_states:
+            i = self.pi_state_index[state]
+
+            if self.game_env.is_game_over(state) \
+                    or self.game_env.is_solved(state):
+                continue
+
+            action = self.pi_policy[state]
+
+            for next_state, probability, reward in \
+                    self.transition_outcomes(state, action):
+
+                j = self.pi_state_index[next_state]
+
+                # expected immediate reward
+                b[i] += probability * reward
+
+                # I - gamma P_pi
+                A[i, j] -= self.game_env.gamma * probability
+
+        t2 = time.perf_counter()
+
+        values = np.linalg.solve(A, b)
+        t3 = time.perf_counter()
+
+        self.pi_values = {
+            state: values[i]
+            for state, i in self.pi_state_index.items()
+        }
 
         improved_policy = {}
 
@@ -281,7 +302,15 @@ class Solver:
                     best_value = action_value
                     best_action = action
             improved_policy[state] = best_action
-            
+
+        t4 = time.perf_counter()
+        print(
+            f"matrix={t2-t1:.6f}, "
+            f"solve={t3-t2:.6f}, "
+            f"improve={t4-t3:.6f}, "
+            f"total={t4-t0:.6f}"
+        )
+
         self.pi_policy = improved_policy
 
     def pi_plan_offline(self):
