@@ -28,7 +28,9 @@ class Solver:
         #
         # TODO: Define any class instance variables you require (e.g. dictionary mapping state to VI value) here.
         #
-        pass
+        self.vi_values = {}
+        self.vi_previous_values = {}
+        self.vi_states = []
 
     # TODO: next time, make this method external to the solver class
     @staticmethod
@@ -54,6 +56,8 @@ class Solver:
         self.vi_states = self.build_vi_states()
         self.vi_values = {state: 0.0 for state in self.vi_states}
         self.vi_previous_values = self.vi_values.copy()
+
+
     def vi_is_converged(self):
         """
         Check if Value Iteration has reached convergence.
@@ -142,7 +146,22 @@ class Solver:
         #
         # In order to ensure compatibility with tester, you should avoid adding additional arguments to this function.
         #
-        pass
+        
+        if self.game_env.is_game_over(state) or self.game_env.is_solved(state):
+                    return self.game_env.ACTIONS[0]
+        
+        best_action = None
+        best_value = float('-inf')
+
+        for action in self.get_valid_actions(state):
+            action_value = 0.0
+            for next_state, transition_prob, reward in self.transition_outcomes(state, action):
+                action_value += reward + self.game_env.gamma * transition_prob * self.vi_values.get(next_state, 0.0)
+            if action_value > best_value:
+                best_value = action_value
+                best_action = action
+
+        return best_action if best_action is not None else self.game_env.ACTIONS[0]
 
     # === Policy Iteration =============================================================================================
 
@@ -293,11 +312,11 @@ class Solver:
                     if move_probability <= 0.0:
                         continue
                     next_state, movement_reward = self.deterministic_move(state, movement, move_distance)
-                    self._expand_transition_sequence(next_state, remaining, probability * move_probability,
+                    self.expand_transition_sequence(next_state, remaining, probability * move_probability,
                                                     reward_so_far + movement_reward, outcomes)
             else:
                 next_state, movement_reward = self.deterministic_move(state, movement, 1)
-                self._expand_transition_sequence(next_state, remaining, probability, reward_so_far + movement_reward, outcomes)
+                self.expand_transition_sequence(next_state, remaining, probability, reward_so_far + movement_reward, outcomes)
     
     def deterministic_move(self, state, action, move_distance):
         reward = -1.0 * self.game_env.ACTION_COST[action]
