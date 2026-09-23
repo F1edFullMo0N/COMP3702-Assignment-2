@@ -1,8 +1,10 @@
 import sys
 import time
+from collections import deque
 
 from game_env import GameEnv
 from game_state import GameState
+
 """
 solution.py
 
@@ -99,7 +101,11 @@ class Solver:
             for action in self.get_valid_actions(state):
                 action_value = 0.0
                 for next_state, transition_prob, reward in self.transition_outcomes(state, action):
-                    action_value += reward + self.game_env.gamma * transition_prob * self.vi_previous_values.get(next_state, 0.0)
+                    action_value += transition_prob * (
+                    reward
+                    + self.game_env.gamma
+                    * self.vi_previous_values.get(next_state, 0.0)
+                )
                 if action_value > best_value:
                     best_value = action_value
 
@@ -156,7 +162,11 @@ class Solver:
         for action in self.get_valid_actions(state):
             action_value = 0.0
             for next_state, transition_prob, reward in self.transition_outcomes(state, action):
-                action_value += reward + self.game_env.gamma * transition_prob * self.vi_values.get(next_state, 0.0)
+                action_value += transition_prob * (
+                reward
+                + self.game_env.gamma
+                * self.vi_values.get(next_state, 0.0)
+            )
             if action_value > best_value:
                 best_value = action_value
                 best_action = action
@@ -266,28 +276,28 @@ class Solver:
 
         drift_step_probability = drift_probability / max(len(drift_actions), 1)
         for drift_action in drift_actions:
-            transition_sequences.append(([drift_action], drift_step_probability 
-                                            * no_double_probability))
-            transition_sequences.append(([drift_action, drift_action],
-                                            drift_step_probability * double_probability))
+            transition_sequences.append(([drift_action], drift_step_probability * no_double_probability))
+            transition_sequences.append(([drift_action, drift_action], drift_step_probability * double_probability))
 
         for sequence, sequence_probability in transition_sequences:
             if sequence_probability <= 0.0:
                 continue
             self.expand_transition_sequence(state, sequence, sequence_probability, 0.0, outcomes)
 
-        return [
-            (next_state, probability_sum, reward_sum)
-            for next_state, (probability_sum, reward_sum) in outcomes.items()
-        ]
-    
+        result = []
+        for next_state, (probability_sum, weighted_reward_sum) in outcomes.items():
+            if probability_sum <= 0.0:
+                continue
+            result.append((next_state, probability_sum, weighted_reward_sum / probability_sum))
+        return result
+
     def build_vi_states(self):
         initial_state = self.game_env.get_init_state()
         visited = {initial_state}
-        queue = [initial_state]
+        queue = deque([initial_state])
 
         while queue:
-            state = queue.pop(0)
+            state = queue.popleft()
             for action in self.get_valid_actions(state):
                 for next_state, _, _ in self.transition_outcomes(state, action):
                     if next_state not in visited:
@@ -295,30 +305,81 @@ class Solver:
                         queue.append(next_state)
 
         return list(visited)
-    
+
     def expand_transition_sequence(self, state, sequence, probability, reward_so_far, outcomes):
-            if not sequence:
-                if state not in outcomes:
-                    outcomes[state] = [0.0, 0.0]
-                outcomes[state][0] += probability
-                outcomes[state][1] += probability * reward_so_far
+        if not sequence:
+            if state not in outcomes:
+                outcomes[state] = [0.0, 0.0]
+            outcomes[state][0] += probability
+            outcomes[state][1] += probability * reward_so_far
+            return
+
+        movement = sequence[0]
+        remaining = sequence[1:]
+
+        if movement in self.game_env.BOOST_ACTIONS:
+            for move_distance, move_probability in enumerate(
+                    self.game_env.boost_probabilities):
+
+                if move_probability <= 0.0:
+                    continue
+
+                next_state, movement_reward, valid, terminal = \
+                    self.deterministic_move(
+                        state, movement, move_distance
+                    )
+
+                if not valid:
+                    self.expand_transition_sequence(
+                        state,
+                        remaining,
+                        probability * move_probability,
+                        reward_so_far,
+                        outcomes
+                    )
+                    continue
+
+                if terminal:
+                    if next_state not in outcomes:
+                        outcomes[next_state] = [0.0, 0.0]
+
+                    p = probability * move_probability
+                    outcomes[next_state][0] += p
+                    outcomes[next_state][1] += \
+                        p * (reward_so_far + movement_reward)
+
+                else:
+                    self.expand_transition_sequence(
+                        next_state,
+                        remaining,
+                        probability * move_probability,
+                        reward_so_far + movement_reward,
+                        outcomes
+                    )
+        else:
+            next_state, movement_reward, valid, terminal = self.deterministic_move(state, movement, 1)
+            if not valid:
+                self.expand_transition_sequence(state, remaining, probability, reward_so_far, outcomes)
                 return
-    
-            movement = sequence[0]
-            remaining = sequence[1:]
-    
-            if movement in self.game_env.BOOST_ACTIONS:
-                for move_distance, move_probability in enumerate(self.game_env.boost_probabilities):
-                    if move_probability <= 0.0:
-                        continue
-                    next_state, movement_reward = self.deterministic_move(state, movement, move_distance)
-                    self.expand_transition_sequence(next_state, remaining, probability * move_probability,
-                                                    reward_so_far + movement_reward, outcomes)
+            if terminal:
+                if next_state not in outcomes:
+                    outcomes[next_state] = [0.0, 0.0]
+                outcomes[next_state][0] += probability
+                outcomes[next_state][1] += probability * (reward_so_far + movement_reward)
             else:
-                next_state, movement_reward = self.deterministic_move(state, movement, 1)
                 self.expand_transition_sequence(next_state, remaining, probability, reward_so_far + movement_reward, outcomes)
-    
+
     def deterministic_move(self, state, action, move_distance):
+        if self.game_env.is_game_over(state) or self.game_env.is_solved(state):
+            return state, 0.0, False, True
+
+        if action in self.game_env.JUMP_ACTIONS:
+            if self.game_env.grid_data[state.row][state.col] != self.game_env.CRATER_TILE:
+                return state, 0.0, False, False
+        elif action in self.game_env.WALK_ACTIONS or action in self.game_env.BOOST_ACTIONS:
+            if self.game_env.grid_data[state.row][state.col] == self.game_env.CRATER_TILE:
+                return state, 0.0, False, False
+
         reward = -1.0 * self.game_env.ACTION_COST[action]
         next_row, next_col = state.row, state.col
         direction = self.game_env._action_direction(action)
@@ -363,5 +424,6 @@ class Solver:
                 self.game_env.grid_data[next_row][next_col] != self.game_env.LAVA_TILE:
             reward -= self.game_env.game_over_penalty
 
-        return next_state, reward
+        terminal = self.game_env.is_game_over(next_state) or self.game_env.is_solved(next_state)
+        return next_state, reward, True, terminal
 
