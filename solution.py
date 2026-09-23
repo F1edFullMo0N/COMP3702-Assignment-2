@@ -225,7 +225,62 @@ class Solver:
         #
         # In order to ensure compatibility with tester, you should avoid adding additional arguments to this function.
         #
-        pass
+        if not self.pi_states:
+            return
+        
+        self.pi_previous_policy = self.pi_policy.copy()
+
+        while True:
+            old_values = self.pi_values.copy()
+            new_values = {}
+            max_delta = 0.0
+
+            for state in self.pi_states:
+                if self.game_env.is_game_over(state) or self.game_env.is_solved(state):
+                    new_values[state] = 0.0
+                    continue
+                action = self.pi_policy[state]
+                action_value = 0.0
+                for next_state, transition_prob, reward in \
+                        self.transition_outcomes(state, action):
+
+                    action_value += transition_prob * (
+                        reward
+                        + self.game_env.gamma
+                        * old_values.get(next_state, 0.0)
+                    )
+                new_values[state] = action_value
+                max_delta = max(
+                    max_delta,
+                    abs(action_value - old_values.get(state, 0.0))
+                )
+            self.pi_values = new_values
+            if max_delta <= self.game_env.epsilon:
+                break
+
+        improved_policy = {}
+
+        for state in self.pi_states:
+            if self.game_env.is_game_over(state) or self.game_env.is_solved(state):
+                improved_policy[state] = self.game_env.ACTIONS[0]
+                continue
+            best_action = None
+            best_value = float('-inf')
+            for action in self.get_valid_actions(state):
+                action_value = 0.0
+                for next_state, transition_prob, reward in \
+                        self.transition_outcomes(state, action):
+                    action_value += transition_prob * (
+                        reward
+                        + self.game_env.gamma
+                        * self.pi_values.get(next_state, 0.0)
+                    )
+                if action_value > best_value:
+                    best_value = action_value
+                    best_action = action
+            improved_policy[state] = best_action
+            
+        self.pi_policy = improved_policy
 
     def pi_plan_offline(self):
         """
