@@ -185,7 +185,15 @@ class Solver:
         #
         # In order to ensure compatibility with tester, you should avoid adding additional arguments to this function.
         #
-        pass
+        self.pi_states = self.build_vi_states()
+        self.pi_values = {state: 0.0 for state in self.pi_states}
+        self.pi_policy = {}
+        self.pi_previous_policy = {}
+
+        for state in self.pi_states:
+            valid_actions = self.get_valid_actions(state)
+            self.pi_policy[state] = valid_actions[0] if valid_actions else self.game_env.ACTIONS[0]
+
 
     def pi_is_converged(self):
         """
@@ -197,7 +205,15 @@ class Solver:
         #
         # In order to ensure compatibility with tester, you should avoid adding additional arguments to this function.
         #
-        pass
+        if not self.pi_states or not self.pi_policy:
+            return False
+        if not self.pi_previous_policy:
+            return False
+
+        for state in self.pi_states:
+            if self.pi_previous_policy.get(state) != self.pi_policy.get(state):
+                return False
+        return True
 
     def pi_iteration(self):
         """
