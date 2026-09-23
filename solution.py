@@ -251,7 +251,15 @@ class Solver:
         #
         # In order to ensure compatibility with tester, you should avoid adding additional arguments to this function.
         #
-        pass
+        if self.game_env.is_game_over(state) or self.game_env.is_solved(state):
+            return self.game_env.ACTIONS[0]
+
+        action = self.pi_policy.get(state)
+        if action is not None and action in self.get_valid_actions(state):
+            return action
+
+        valid_actions = self.get_valid_actions(state)
+        return valid_actions[0] if valid_actions else self.game_env.ACTIONS[0]
 
     # === Helper Methods ===============================================================================================
     #
